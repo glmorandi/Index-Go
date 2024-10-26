@@ -367,6 +367,51 @@ func pesquisarAcesso(filename string, id int32) (Acesso, error) {
 	return Acesso{}, fmt.Errorf("acesso com ID %d não encontrado", id)
 }
 
+func encontrarProdutoMaisCaro(filename string) (Produto, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return Produto{}, fmt.Errorf("erro ao abrir o arquivo de produtos: %w", err)
+	}
+	defer file.Close()
+
+	var produto Produto
+	var produtoMaisCaro Produto
+	maiorPreco := float32(0)
+
+	count := 0
+	fileInfo, _ := file.Stat()
+	size := int(fileInfo.Size() / int64(binary.Size(produto)))
+
+	for i := 0; i < size; i++ {
+		_, err := file.Seek(int64(i*binary.Size(produto)), 0)
+		if err != nil {
+			return Produto{}, fmt.Errorf("erro ao mover o cursor para o offset: %w", err)
+		}
+
+		err = binary.Read(file, binary.LittleEndian, &produto)
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return Produto{}, fmt.Errorf("erro ao ler registro de produto: %w", err)
+		}
+
+		preco := bytesToFloat32(produto.Price)
+		if preco > maiorPreco {
+			maiorPreco = preco
+			produtoMaisCaro = produto
+		}
+
+		count++
+	}
+
+	if count == 0 {
+		return Produto{}, fmt.Errorf("nenhum produto encontrado")
+	}
+
+	return produtoMaisCaro, nil
+}
+
 func criarIndiceProdutos(filenameProd string, indexProd string) error {
 	file, err := os.Open(filenameProd)
 	if err != nil {
@@ -405,6 +450,40 @@ func criarIndiceProdutos(filenameProd string, indexProd string) error {
 	}
 
 	return nil
+}
+
+func userSessionMaisFrequente(filename string) (string, int, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return "", 0, fmt.Errorf("erro ao abrir o arquivo de acessos: %w", err)
+	}
+	defer file.Close()
+
+	var acesso Acesso
+	sessaoCount := make(map[string]int)
+	for {
+		err := binary.Read(file, binary.LittleEndian, &acesso)
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return "", 0, fmt.Errorf("erro ao ler registro de acesso: %w", err)
+		}
+
+		sessao := string(acesso.UserSession[:])
+		sessaoCount[sessao]++
+	}
+	var sessaoMaisFrequente string
+	var maxCount int
+
+	for sessao, count := range sessaoCount {
+		if count > maxCount {
+			maxCount = count
+			sessaoMaisFrequente = sessao
+		}
+	}
+
+	return sessaoMaisFrequente, maxCount, nil
 }
 
 func criarIndiceAcessos(filenameAccess string, indexAccess string) error {
@@ -779,6 +858,26 @@ func main() {
 			bytesToInt32(acessoEncontrado.UserID),
 			string(acessoEncontrado.EventType[:]),
 		)
+	}
+
+	produtoMaisCaro, err := encontrarProdutoMaisCaro(filenameProd)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Printf("Produto mais caro: ID: %d, ProductID: %d, Preço: %.2f, Marca: %s, Categoria: %s\n",
+			bytesToInt32(produtoMaisCaro.ID),
+			bytesToInt32(produtoMaisCaro.ProductID),
+			bytesToFloat32(produtoMaisCaro.Price),
+			string(produtoMaisCaro.Brand[:]),
+			string(produtoMaisCaro.CategoryCode[:]),
+		)
+	}
+
+	sessao, count, err := userSessionMaisFrequente(filenameAccess)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Printf("A UserSession mais frequente é: %s, com %d ocorrências.\n", sessao, count)
 	}
 
 	indexProd := "indice_produtos.dat"
